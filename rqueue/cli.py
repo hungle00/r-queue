@@ -1,8 +1,12 @@
 import argparse
+import asyncio
 from datetime import datetime
 
 import redis
+import redis.asyncio
 
+from rqueue.async_job_queue import AsyncJobQueue
+from rqueue.async_worker import AsyncWorker
 from rqueue.dead_letter_queue import DeadLetterQueue
 from rqueue.delayed_queue import DelayedQueue
 from rqueue.job import JobStatus
@@ -112,6 +116,13 @@ def build_parser():
     worker_parser.add_argument("--name", default="worker")
     worker_parser.add_argument("--threads", type=_positive_int, default=5)
 
+    async_worker_parser = commands.add_parser(
+        "async-worker", help="Start an asyncio worker"
+    )
+    async_worker_parser.add_argument("--queues", default="default")
+    async_worker_parser.add_argument("--name", default="async-worker")
+    async_worker_parser.add_argument("--concurrency", type=_positive_int, default=5)
+
     list_parser = commands.add_parser("list", help="List jobs by status")
     list_parser.add_argument("--status", choices=_status_choices(), required=True)
 
@@ -151,6 +162,12 @@ def main(argv=None):
         worker.start()
         return 0
 
+    if args.command == "async-worker":
+        queues = [name.strip() for name in args.queues.split(",") if name.strip()]
+        if not queues:
+            parser.error("--queues must contain at least one queue name")
+        return asyncio.run(_run_async_worker(args, queues))
+
     if args.command == "list":
         _list_status(JobQueue(redis_client), args.status)
         return 0
@@ -167,6 +184,23 @@ def main(argv=None):
         return 0
 
     parser.error(f"unsupported command: {args.command}")
+
+
+async def _run_async_worker(args, queues):
+    redis_client = redis.asyncio.Redis(
+        host="localhost", port=6379, db=0, decode_responses=True
+    )
+    try:
+        worker = AsyncWorker(
+            queue=AsyncJobQueue(redis_client),
+            consumer_name=args.name,
+            queues=queues,
+            concurrency=args.concurrency,
+        )
+        await worker.start()
+    finally:
+        await redis_client.aclose()
+    return 0
 
 
 if __name__ == "__main__":

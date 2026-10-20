@@ -28,6 +28,40 @@ The default worker command listens to the `default` queue:
 rqueue worker
 ```
 
+For asyncio-capable jobs, start the async worker instead:
+
+```bash
+rqueue async-worker --queues default,emails --name async-local-worker --concurrency 20
+```
+
+An `AsyncJobQueue` must be constructed with `redis.asyncio.Redis` configured
+with `decode_responses=True`. Enqueue jobs with the existing synchronous
+`JobQueue`; the async worker consumes the same Redis streams and serialized
+jobs. Coroutine handlers are awaited directly.
+Synchronous handlers run in a thread, not a child process, so the async worker
+does not provide the process isolation of `Worker`. Use it primarily for
+I/O-bound handlers, and choose concurrency based on their resource limits.
+
+The worker is also available as a Python API:
+
+```python
+import asyncio
+import redis.asyncio
+from rqueue import AsyncJobQueue, AsyncWorker
+
+async def main():
+    client = redis.asyncio.Redis(decode_responses=True)
+    try:
+        worker = AsyncWorker(
+            AsyncJobQueue(client), consumer_name="async-worker", concurrency=20
+        )
+        await worker.start()
+    finally:
+        await client.aclose()
+
+asyncio.run(main())
+```
+
 Use these commands to inspect queue state and jobs:
 
 ```bash
